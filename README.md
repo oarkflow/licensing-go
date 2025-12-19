@@ -568,7 +568,9 @@ func (ld *LicenseData) CanPerform(featureSlug, scopeSlug string) (allowed bool, 
 
 For SDK testing and fixture verification:
 
-```go
+```goas
+
+
 // DecryptStoredLicense decrypts a stored license. Accepts the current device fingerprint
 // so that decryption is only possible on the device the license was issued to.
 func DecryptStoredLicense(stored *StoredLicense, currentFingerprint string) (*LicenseData, []byte, error)

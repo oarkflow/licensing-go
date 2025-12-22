@@ -4,7 +4,7 @@ go 1.25.0
 
 require github.com/charmbracelet/huh v0.8.0
 
-require github.com/oarkflow/licensing v0.0.22
+require github.com/oarkflow/licensing v0.0.23
 
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect

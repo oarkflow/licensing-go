@@ -6,11 +6,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/mattn/go-isatty"
 	"github.com/phuslu/log"
 )
 
@@ -20,6 +22,9 @@ type Credentials struct {
 	ClientID   string `json:"client_id"`
 	LicenseKey string `json:"license_key"`
 	IsTrial    bool   `json:"is_trial,omitempty"`
+	// Source indicates where these credentials were obtained (e.g. "stdin", "file", "param").
+	// It is not serialized to JSON when sent to the activation server.
+	Source     string `json:"-"`
 }
 
 // LicensedAppFunc is the function signature for the licensed application handler
@@ -152,16 +157,50 @@ func attemptActivation(client *Client, credentials ...*Credentials) (*LicenseDat
 	}
 	fmt.Println()
 	var creds *Credentials
+	var credSource string
 	fmt.Println("🔐 License Activation Required")
 	fmt.Printf("📱 Device Fingerprint: %s\n", fingerprint)
 	fmt.Println()
 
 	if len(credentials) > 0 {
 		creds = credentials[0]
+		if creds.Source != "" {
+			credSource = creds.Source
+		} else {
+			credSource = "parameter"
+		}
 	} else {
-		creds, err = ResolveCredentials()
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve credentials: %w", err)
+		// 1) Prefer piped JSON from stdin when available — this should take
+		// precedence over local files so CI/servers can provide credentials safely.
+		if !isatty.IsTerminal(os.Stdin.Fd()) {
+			if c, err := readCredentialsFromStdin(); err != nil {
+				return nil, fmt.Errorf("failed to read credentials from stdin: %w", err)
+			} else if c != nil {
+				creds = c
+				credSource = "stdin"
+			}
+		}
+
+		// 2) If not provided via stdin, check for a local `licensing.json` file in the CWD.
+		if creds == nil {
+			if c, err := loadCredentialsFromCWD(); err != nil {
+				// Non-fatal; continue to other resolution methods.
+				log.Warn().Err(err).Msg("failed to load credentials from licensing.json in current directory")
+			} else if c != nil {
+				creds = c
+				credSource = "file:./licensing.json"
+			}
+		}
+
+		// 3) Finally, try the ResolveCredentials hook (default returns nil).
+		if creds == nil {
+			creds, err = ResolveCredentials()
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve credentials: %w", err)
+			}
+			if creds != nil {
+				credSource = "resolver"
+			}
 		}
 	}
 
@@ -188,13 +227,17 @@ func attemptActivation(client *Client, credentials ...*Credentials) (*LicenseDat
 	// Activate the license
 	fmt.Println("🔑 Activating license...")
 	if err := client.Activate(creds.Email, creds.ClientID, creds.LicenseKey); err != nil {
-		// Print error explicitly for debugging
-		fmt.Fprintf(os.Stderr, "❌ Activation error: %v\n", err)
+		// Print error explicitly for debugging and include credential source when available
+		if credSource != "" {
+			fmt.Fprintf(os.Stderr, "❌ Activation error (source: %s): %v\n", credSource, err)
+		} else {
+			fmt.Fprintf(os.Stderr, "❌ Activation error: %v\n", err)
+		}
 		// Check for server unavailable error
 		if errors.Is(err, ErrServerUnavailable) {
 			return nil, fmt.Errorf("cannot reach license server - please check your network connection: %w", err)
 		}
-		return nil, fmt.Errorf("activation failed: %w", err)
+		return nil, fmt.Errorf("activation failed (source: %s): %w", credSource, err)
 	}
 
 	fmt.Println("✅ License activated successfully!")
@@ -229,6 +272,74 @@ func restartAfterActivation() {
 		log.Fatal().Err(err).Msg("failed to restart after activation")
 	}
 	os.Exit(0)
+}
+
+// EnsureActivated ensures the client is activated. It will attempt verification
+// and, if necessary, perform activation using any available credentials sources
+// (configured license file, ./licensing.json, piped JSON on stdin, or interactive
+// prompt when a terminal is present).
+func EnsureActivated(cfg Config) (*LicenseData, error) {
+	clientCfg := ResolveClientConfig(cfg)
+	client, err := NewClient(clientCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create licensing client: %w", err)
+	}
+
+	// If already activated, verify and return
+	if client.IsActivated() {
+		license, err := client.Verify()
+		if err != nil {
+			if errors.Is(err, ErrServerUnavailable) {
+				return nil, fmt.Errorf("license server unavailable: %w", err)
+			}
+			// Try to reactivate if verification fails
+			license, err = attemptActivation(client)
+			if err != nil {
+				return nil, fmt.Errorf("license activation failed: %w", err)
+			}
+			return license, nil
+		}
+		return license, nil
+	}
+
+	// Not activated - prefer piped stdin first (highest precedence)
+	if !isatty.IsTerminal(os.Stdin.Fd()) {
+		if c, err := readCredentialsFromStdin(); err != nil {
+			return nil, fmt.Errorf("failed to read credentials from stdin: %w", err)
+		} else if c != nil {
+			license, err := attemptActivation(client, c)
+			if err != nil {
+				return nil, fmt.Errorf("license activation failed: %w", err)
+			}
+			return license, nil
+		}
+	}
+
+	// Next, try configured license file if provided
+	if cfg.LicenseFile != "" {
+		credsFile, err := LoadCredentialsFile(cfg.LicenseFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load license file %s: %w", cfg.LicenseFile, err)
+		}
+		creds := &Credentials{
+			Email:      credsFile.Email,
+			ClientID:   credsFile.ClientID,
+			LicenseKey: credsFile.LicenseKey,
+		}
+		license, err := attemptActivation(client, creds)
+		if err != nil {
+			return nil, fmt.Errorf("license activation failed: %w", err)
+		}
+		return license, nil
+	}
+
+	// Defer to attemptActivation which will check ./licensing.json and, if a terminal is present,
+	// fall back to interactive prompts.
+	license, err := attemptActivation(client)
+	if err != nil {
+		return nil, fmt.Errorf("license activation failed: %w", err)
+	}
+	return license, nil
 }
 
 // activateTrial attempts to activate a trial license
@@ -280,6 +391,9 @@ func PromptForCredentialsInteractiveExported(client *Client) (*Credentials, erro
 
 // promptForCredentialsInteractive prompts for license credentials using huh forms
 func promptForCredentialsInteractive(client *Client) (*Credentials, error) {
+	if !hasTerminal() {
+		return nil, fmt.Errorf("no terminal available: please provide credentials via `licensing.json` in the current directory or pipe JSON credentials to stdin")
+	}
 	var inputMethod string
 
 	// Check trial eligibility before showing options
@@ -335,6 +449,9 @@ func promptForCredentialsInteractive(client *Client) (*Credentials, error) {
 
 // promptForTrialInteractive prompts for email to start a trial
 func promptForTrialInteractive() (*Credentials, error) {
+	if !hasTerminal() {
+		return nil, fmt.Errorf("no terminal available: please provide credentials via `licensing.json` in the current directory or pipe JSON credentials to stdin")
+	}
 	var email string
 
 	form := huh.NewForm(
@@ -372,6 +489,9 @@ func promptForTrialInteractive() (*Credentials, error) {
 
 // promptForJSONInteractive prompts for JSON credentials using huh
 func promptForJSONInteractive() (*Credentials, error) {
+	if !hasTerminal() {
+		return nil, fmt.Errorf("no terminal available: please provide credentials via `licensing.json` in the current directory or pipe JSON credentials to stdin")
+	}
 	var jsonInput string
 
 	form := huh.NewForm(
@@ -432,6 +552,9 @@ func promptForJSONInteractive() (*Credentials, error) {
 
 // promptForIndividualFieldsInteractive prompts for each credential field using huh
 func promptForIndividualFieldsInteractive() (*Credentials, error) {
+	if !hasTerminal() {
+		return nil, fmt.Errorf("no terminal available: please provide credentials via `licensing.json` in the current directory or pipe JSON credentials to stdin")
+	}
 	var email, clientID, licenseKey string
 
 	form := huh.NewForm(
@@ -499,6 +622,51 @@ func truncateKey(key string) string {
 		return key
 	}
 	return key[:8]
+}
+
+// hasTerminal returns true when stdin is a TTY.
+func hasTerminal() bool {
+	return isatty.IsTerminal(os.Stdin.Fd())
+}
+
+// loadCredentialsFromCWD checks for ./licensing.json and loads it if present.
+func loadCredentialsFromCWD() (*Credentials, error) {
+	const fname = "licensing.json"
+	if _, err := os.Stat(fname); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	credsFile, err := LoadCredentialsFile(fname)
+	if err != nil {
+		return nil, err
+	}
+	return &Credentials{
+		Email:      credsFile.Email,
+		ClientID:   credsFile.ClientID,
+		LicenseKey: credsFile.LicenseKey,
+	}, nil
+}
+
+// readCredentialsFromStdin reads credentials JSON from stdin (non-tty servers).
+func readCredentialsFromStdin() (*Credentials, error) {
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return nil, err
+	}
+	s := strings.TrimSpace(string(data))
+	if s == "" {
+		return nil, nil
+	}
+	// Accept single-quoted or double-quoted JSON as well
+	s = strings.Trim(s, "'\"")
+	var creds Credentials
+	if err := json.Unmarshal([]byte(s), &creds); err != nil {
+		return nil, err
+	}
+	creds.Source = "stdin"
+	return &creds, nil
 }
 
 // filterLicenseFlags extracts only the license-related flags from args
@@ -642,6 +810,9 @@ func PromptForLicenseRenewal(cfg Config) (*LicenseData, error) {
 
 // promptForRenewalCredentials prompts for license credentials without trial option
 func promptForRenewalCredentials() (*Credentials, error) {
+	if !hasTerminal() {
+		return nil, fmt.Errorf("no terminal available: please provide credentials via `licensing.json` in the current directory or pipe JSON credentials to stdin")
+	}
 	var inputMethod string
 
 	// Build options - NO trial option for renewal

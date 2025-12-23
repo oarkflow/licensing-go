@@ -55,23 +55,12 @@ func main() {
 	fmt.Println("=== Go Licensing SDK - Basic Example ===")
 	fmt.Println()
 
-	// Load credentials from file if provided
+	// Collect CLI-provided credentials (lowest precedence). The SDK will handle
+	// reading piped JSON and local files according to configured precedence.
 	var credEmail, credClientID, credLicenseKey string
-	if *licenseFile != "" {
-		creds, err := licensing.LoadCredentialsFile(*licenseFile)
-		if err != nil {
-			log.Fatalf("Failed to load credentials file: %v", err)
-		}
-		credEmail = creds.Email
-		credClientID = creds.ClientID
-		credLicenseKey = creds.LicenseKey
-		fmt.Printf("📄 Loaded credentials from: %s\n", *licenseFile)
-	} else {
-		// Use command line flags
-		credEmail = *email
-		credClientID = *clientID
-		credLicenseKey = *licenseKey
-	}
+	credEmail = *email
+	credClientID = *clientID
+	credLicenseKey = *licenseKey
 
 	// If an offline bundle path is provided, run offline verification path and exit
 	if *offlineBundle != "" {
@@ -114,87 +103,88 @@ func main() {
 		fmt.Printf("🔐 SSH key path provided: %s (Note: SSH auth integration pending)\n", *sshKeyPath)
 	}
 
-	// Step 1: Check if already activated
-	if client.IsActivated() {
-		fmt.Println("✅ License already exists locally")
+	var license *licensing.LicenseData
+
+	// If user explicitly requested a trial, do the trial path first
+	if *startTrial {
+		if credEmail == "" {
+			fmt.Println("❌ Email is required for trial. Use --email flag.")
+			os.Exit(1)
+		}
+
+		fmt.Println("🎁 Requesting trial license...")
+
+		// Check trial eligibility first
+		eligibility, err := client.CheckTrialEligibility(*productID)
+		if err != nil {
+			log.Fatalf("❌ Failed to check trial eligibility: %v", err)
+		}
+
+		if !eligibility.Eligible {
+			fmt.Printf("❌ Trial not available: %s\n", eligibility.Message)
+			if eligibility.HasUsedTrial {
+				fmt.Println()
+				fmt.Println("═══════════════════════════════════════════════════════════════")
+				fmt.Println("⚠️  This device has already used a trial.")
+				fmt.Println()
+				fmt.Printf("🔗 Subscribe now: %s\n", *subscriptionURL)
+				fmt.Println()
+				fmt.Println("Or enter your license credentials:")
+				fmt.Println("  go run main.go --license-key KEY --email EMAIL --client-id ID")
+				fmt.Println("═══════════════════════════════════════════════════════════════")
+			}
+			os.Exit(1)
+		}
+
+		// Request trial license
+		_, err = client.RequestTrial(credEmail, *productID, "", 14)
+		if err != nil {
+			log.Fatalf("❌ Trial activation failed: %v", err)
+		}
+		fmt.Println("✅ Trial license activated successfully!")
 	} else {
-		fmt.Println("📝 No local license found")
-
-		// Check if user wants to start a trial
-		if *startTrial {
-			if credEmail == "" {
-				fmt.Println("❌ Email is required for trial. Use --email flag.")
-				os.Exit(1)
-			}
-
-			fmt.Println("🎁 Requesting trial license...")
-
-			// Check trial eligibility first
-			eligibility, err := client.CheckTrialEligibility(*productID)
-			if err != nil {
-				log.Fatalf("❌ Failed to check trial eligibility: %v", err)
-			}
-
-			if !eligibility.Eligible {
-				fmt.Printf("❌ Trial not available: %s\n", eligibility.Message)
-				if eligibility.HasUsedTrial {
-					fmt.Println()
-					fmt.Println("═══════════════════════════════════════════════════════════════")
-					fmt.Println("⚠️  This device has already used a trial.")
-					fmt.Println()
-					fmt.Printf("🔗 Subscribe now: %s\n", *subscriptionURL)
-					fmt.Println()
-					fmt.Println("Or enter your license credentials:")
-					fmt.Println("  go run main.go --license-key KEY --email EMAIL --client-id ID")
-					fmt.Println("═══════════════════════════════════════════════════════════════")
+		// Use SDK helper that attempts to verify, activate from configured file,
+		// ./licensing.json, stdin JSON, or interactive prompt when a terminal
+		cfg := licensing.Config{
+			ServerURL:         *serverURL,
+			AppName:           "BasicExample",
+			AppVersion:        "1.0.0",
+			HTTPTimeout:       15 * time.Second,
+			AllowInsecureHTTP: *insecure,
+			LicenseFile:       *licenseFile,
+			ProductID:         *productID,
+		}
+		lic, err := licensing.EnsureActivated(cfg)
+		if err != nil {
+			// Fallback: if CLI flags were provided, try them as the last resort
+			if credEmail != "" && credClientID != "" && credLicenseKey != "" {
+				fmt.Println("No credentials from pipe/file/interactive; trying CLI flags for activation...")
+				if err := client.Activate(credEmail, credClientID, credLicenseKey); err != nil {
+					log.Fatalf("❌ Activation failed: %v", err)
 				}
-				os.Exit(1)
-			}
-
-			// Request trial license
-			_, err = client.RequestTrial(credEmail, *productID, "", 14)
-			if err != nil {
-				log.Fatalf("❌ Trial activation failed: %v", err)
-			}
-			fmt.Println("✅ Trial license activated successfully!")
-		} else {
-			// Validate credentials for regular activation
-			if credLicenseKey == "" || credEmail == "" || credClientID == "" {
-				fmt.Println()
-				fmt.Println("Usage: go run main.go --license-key KEY --email EMAIL --client-id ID")
-				fmt.Println("   or: go run main.go --license-file /path/to/credentials.json")
-				fmt.Println("   or: go run main.go --trial --email EMAIL")
-				fmt.Println()
-				fmt.Println("Credentials file format:")
-				fmt.Println(`  {"email": "...", "client_id": "...", "license_key": "..."}`)
-				fmt.Println()
-				fmt.Println("To get credentials:")
-				fmt.Println("1. Start the license server: go run cmd/server/main.go")
-				fmt.Println("2. Create a client via API")
-				fmt.Println("3. Create a license via API")
-				fmt.Println("4. Use the license_key from the response")
-				fmt.Println()
-				fmt.Println("Or start a 14-day trial:")
-				fmt.Println("  go run main.go --trial --email user@example.com")
-				os.Exit(1)
-			}
-
-			// Step 2: Activate the license
-			fmt.Println("🔑 Activating license...")
-			err := client.Activate(credEmail, credClientID, credLicenseKey)
-			if err != nil {
+				// Verify after activation
+				license, err = client.Verify()
+				if err != nil {
+					log.Fatalf("❌ Verification failed: %v", err)
+				}
+			} else {
 				log.Fatalf("❌ Activation failed: %v", err)
 			}
-			fmt.Println("✅ License activated successfully!")
+		} else {
+			license = lic
 		}
 	}
 
 	// Step 3: Verify the license and get license data
 	fmt.Println()
 	fmt.Println("🔍 Verifying license...")
-	license, err := client.Verify()
-	if err != nil {
-		log.Fatalf("❌ Verification failed: %v", err)
+	if license == nil {
+		license, err = client.Verify()
+		if err != nil {
+			log.Fatalf("❌ Verification failed: %v", err)
+		}
+	} else {
+		// already returned by EnsureActivated
 	}
 	fmt.Println("✅ License is valid!")
 

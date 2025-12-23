@@ -39,9 +39,7 @@ import (
 func main() {
 	// Command line flags
 	serverURL := flag.String("server", "http://localhost:6601", "License server URL (use HTTPS in production)")
-	licenseKey := flag.String("license-key", "", "License key for activation")
 	email := flag.String("email", "", "Email for activation")
-	clientID := flag.String("client-id", "", "Client ID for activation")
 	licenseFile := flag.String("license-file", "", "Path to JSON file with license credentials")
 	startTrial := flag.Bool("trial", false, "Start a trial license")
 	productID := flag.String("product-id", "", "Product ID for trial (optional)")
@@ -57,10 +55,8 @@ func main() {
 
 	// Collect CLI-provided credentials (lowest precedence). The SDK will handle
 	// reading piped JSON and local files according to configured precedence.
-	var credEmail, credClientID, credLicenseKey string
+	var credEmail string
 	credEmail = *email
-	credClientID = *clientID
-	credLicenseKey = *licenseKey
 
 	// If an offline bundle path is provided, run offline verification path and exit
 	if *offlineBundle != "" {
@@ -103,9 +99,133 @@ func main() {
 		fmt.Printf("🔐 SSH key path provided: %s (Note: SSH auth integration pending)\n", *sshKeyPath)
 	}
 
-	var license *licensing.LicenseData
+	// Define the application handler that runs after successful activation/verification.
+	appHandler := func(ctx context.Context, license *licensing.LicenseData) error {
+		// Check for trial status and handle expiration
+		if license.IsTrial {
+			trialInfo := license.GetTrialInfo()
+			fmt.Println()
+			fmt.Println("═══════════════════════════════════════════════════════════════")
+			fmt.Println("🎁 TRIAL LICENSE")
+			fmt.Println("═══════════════════════════════════════════════════════════════")
 
-	// If user explicitly requested a trial, do the trial path first
+			if trialInfo.IsExpired {
+				// Trial has expired - show subscription prompt
+				fmt.Println("⚠️  Your trial has expired!")
+				fmt.Println()
+				fmt.Printf("🔗 Subscribe now: %s\n", *subscriptionURL)
+				fmt.Println()
+				fmt.Println("Or enter your license credentials:")
+				fmt.Println("  go run main.go --license-key KEY --email EMAIL --client-id ID")
+				fmt.Println("═══════════════════════════════════════════════════════════════")
+				return fmt.Errorf("trial license expired")
+			}
+
+			// Trial is still active
+			fmt.Printf("📅 %s\n", trialInfo.Message)
+			if trialInfo.DaysRemaining <= 3 {
+				fmt.Println()
+				fmt.Println("⚠️  Your trial is ending soon!")
+				fmt.Printf("🔗 Subscribe to continue: %s\n", *subscriptionURL)
+			}
+			fmt.Println("═══════════════════════════════════════════════════════════════")
+		}
+
+		// Display license info
+		fmt.Println()
+		fmt.Println("=== License Information ===")
+		fmt.Printf("ID:          %s\n", license.ID)
+		fmt.Printf("Email:       %s\n", license.Email)
+		fmt.Printf("Plan:        %s\n", license.PlanSlug)
+		if license.IsTrial {
+			fmt.Printf("Type:        🎁 Trial\n")
+			fmt.Printf("Trial Ends:  %s\n", license.TrialExpiresAt.Format("2006-01-02 15:04:05"))
+		} else {
+			fmt.Printf("Type:        Licensed\n")
+		}
+		fmt.Printf("Issued:      %s\n", license.IssuedAt.Format("2006-01-02 15:04:05"))
+		fmt.Printf("Expires:     %s\n", license.ExpiresAt.Format("2006-01-02 15:04:05"))
+		fmt.Printf("Max Devices: %d\n", license.MaxDevices)
+		fmt.Printf("Activated:   %d device(s)\n", license.CurrentActivations)
+
+		// Step 5: Check features (if entitlements are configured)
+		fmt.Println()
+		fmt.Println("=== Feature Access ===")
+
+		if license.Entitlements != nil {
+			fmt.Printf("Product: %s\n", license.Entitlements.ProductSlug)
+			fmt.Printf("Plan:    %s\n", license.Entitlements.PlanSlug)
+			fmt.Println()
+
+			// List all features
+			for slug, feature := range license.Entitlements.Features {
+				status := "❌ Disabled"
+				if feature.Enabled {
+					status = "✅ Enabled"
+				}
+				fmt.Printf("  Feature: %s - %s\n", slug, status)
+
+				// List scopes
+				for scopeSlug, scope := range feature.Scopes {
+					permission := string(scope.Permission)
+					if scope.Limit > 0 {
+						permission = fmt.Sprintf("%s (limit: %d)", permission, scope.Limit)
+					}
+					fmt.Printf("    - %s: %s\n", scopeSlug, permission)
+				}
+			}
+		} else {
+			fmt.Println("No feature entitlements configured for this license.")
+			fmt.Println("Configure a product, plan, and features in the license server")
+			fmt.Println("to enable feature-based access control.")
+		}
+
+		// Step 6: Demonstrate feature checking
+		fmt.Println()
+		fmt.Println("=== Feature Checks ===")
+
+		features := []string{"gui", "cli", "api", "premium"}
+		for _, feat := range features {
+			if license.HasFeature(feat) {
+				fmt.Printf("✅ Feature '%s' is available\n", feat)
+			} else {
+				fmt.Printf("❌ Feature '%s' is not available\n", feat)
+			}
+		}
+
+		// Step 7: Demonstrate scope checking
+		fmt.Println()
+		fmt.Println("=== Scope Checks ===")
+
+		scopes := [][2]string{
+			{"gui", "list"},
+			{"gui", "create"},
+			{"gui", "update"},
+			{"gui", "delete"},
+			{"api", "read"},
+			{"api", "write"},
+		}
+
+		for _, scope := range scopes {
+			feature, scopeName := scope[0], scope[1]
+			allowed, limit := license.CanPerform(feature, scopeName)
+			if allowed {
+				if limit > 0 {
+					fmt.Printf("✅ Can %s:%s (limit: %d)\n", feature, scopeName, limit)
+				} else {
+					fmt.Printf("✅ Can %s:%s\n", feature, scopeName)
+				}
+			} else {
+				fmt.Printf("❌ Cannot %s:%s\n", feature, scopeName)
+			}
+		}
+
+		fmt.Println()
+		fmt.Println("=== Done ===")
+		return nil
+	}
+
+	// If user explicitly requested a trial, perform trial activation using the client
 	if *startTrial {
 		if credEmail == "" {
 			fmt.Println("❌ Email is required for trial. Use --email flag.")
@@ -137,195 +257,34 @@ func main() {
 		}
 
 		// Request trial license
-		_, err = client.RequestTrial(credEmail, *productID, "", 14)
+		lic, err := client.RequestTrial(credEmail, *productID, "", 14)
 		if err != nil {
 			log.Fatalf("❌ Trial activation failed: %v", err)
 		}
 		fmt.Println("✅ Trial license activated successfully!")
-	} else {
-		// Use SDK helper that attempts to verify, activate from configured file,
-		// ./licensing.json, stdin JSON, or interactive prompt when a terminal
-		cfg := licensing.Config{
-			ServerURL:         *serverURL,
-			AppName:           "BasicExample",
-			AppVersion:        "1.0.0",
-			HTTPTimeout:       15 * time.Second,
-			AllowInsecureHTTP: *insecure,
-			LicenseFile:       *licenseFile,
-			ProductID:         *productID,
+
+		// Call handler with trial license
+		if err := appHandler(context.Background(), lic); err != nil {
+			log.Fatalf("❌ Application error: %v", err)
 		}
-		lic, err := licensing.EnsureActivated(cfg)
-		if err != nil {
-			// Fallback: if CLI flags were provided, try them as the last resort
-			if credEmail != "" && credClientID != "" && credLicenseKey != "" {
-				fmt.Println("No credentials from pipe/file/interactive; trying CLI flags for activation...")
-				if err := client.Activate(credEmail, credClientID, credLicenseKey); err != nil {
-					log.Fatalf("❌ Activation failed: %v", err)
-				}
-				// Verify after activation
-				license, err = client.Verify()
-				if err != nil {
-					log.Fatalf("❌ Verification failed: %v", err)
-				}
-			} else {
-				log.Fatalf("❌ Activation failed: %v", err)
-			}
-		} else {
-			license = lic
-		}
+		return
 	}
 
-	// Step 3: Verify the license and get license data
-	fmt.Println()
-	fmt.Println("🔍 Verifying license...")
-	if license == nil {
-		license, err = client.Verify()
-		if err != nil {
-			log.Fatalf("❌ Verification failed: %v", err)
-		}
-	} else {
-		// already returned by EnsureActivated
-	}
-	fmt.Println("✅ License is valid!")
-
-	// Step 4: Check for trial status and handle expiration
-	if license.IsTrial {
-		trialInfo := license.GetTrialInfo()
-		fmt.Println()
-		fmt.Println("═══════════════════════════════════════════════════════════════")
-		fmt.Println("🎁 TRIAL LICENSE")
-		fmt.Println("═══════════════════════════════════════════════════════════════")
-
-		if trialInfo.IsExpired {
-			// Trial has expired - show subscription prompt
-			fmt.Println("⚠️  Your trial has expired!")
-			fmt.Println()
-			fmt.Printf("🔗 Subscribe now: %s\n", *subscriptionURL)
-			fmt.Println()
-			fmt.Println("Or enter your license credentials:")
-			fmt.Println("  go run main.go --license-key KEY --email EMAIL --client-id ID")
-			fmt.Println("═══════════════════════════════════════════════════════════════")
-			os.Exit(1)
-		}
-
-		// Trial is still active
-		fmt.Printf("📅 %s\n", trialInfo.Message)
-		if trialInfo.DaysRemaining <= 3 {
-			fmt.Println()
-			fmt.Println("⚠️  Your trial is ending soon!")
-			fmt.Printf("🔗 Subscribe to continue: %s\n", *subscriptionURL)
-		}
-		fmt.Println("═══════════════════════════════════════════════════════════════")
+	// Non-trial path: use Run to handle activation and run the handler
+	cfg := licensing.Config{
+		ServerURL:         *serverURL,
+		AppName:           "BasicExample",
+		AppVersion:        "1.0.0",
+		HTTPTimeout:       15 * time.Second,
+		AllowInsecureHTTP: *insecure,
+		LicenseFile:       *licenseFile,
+		ProductID:         *productID,
 	}
 
-	// Display license info
-	fmt.Println()
-	fmt.Println("=== License Information ===")
-	fmt.Printf("ID:          %s\n", license.ID)
-	fmt.Printf("Email:       %s\n", license.Email)
-	fmt.Printf("Plan:        %s\n", license.PlanSlug)
-	if license.IsTrial {
-		fmt.Printf("Type:        🎁 Trial\n")
-		fmt.Printf("Trial Ends:  %s\n", license.TrialExpiresAt.Format("2006-01-02 15:04:05"))
-	} else {
-		fmt.Printf("Type:        Licensed\n")
-	}
-	fmt.Printf("Issued:      %s\n", license.IssuedAt.Format("2006-01-02 15:04:05"))
-	fmt.Printf("Expires:     %s\n", license.ExpiresAt.Format("2006-01-02 15:04:05"))
-	fmt.Printf("Max Devices: %d\n", license.MaxDevices)
-	fmt.Printf("Activated:   %d device(s)\n", license.CurrentActivations)
+	licensing.Run(cfg, func(ctx context.Context, license *licensing.LicenseData) error {
+		return appHandler(ctx, license)
+	})
 
-	// Step 5: Check features (if entitlements are configured)
-	fmt.Println()
-	fmt.Println("=== Feature Access ===")
-
-	if license.Entitlements != nil {
-		fmt.Printf("Product: %s\n", license.Entitlements.ProductSlug)
-		fmt.Printf("Plan:    %s\n", license.Entitlements.PlanSlug)
-		fmt.Println()
-
-		// List all features
-		for slug, feature := range license.Entitlements.Features {
-			status := "❌ Disabled"
-			if feature.Enabled {
-				status = "✅ Enabled"
-			}
-			fmt.Printf("  Feature: %s - %s\n", slug, status)
-
-			// List scopes
-			for scopeSlug, scope := range feature.Scopes {
-				permission := string(scope.Permission)
-				if scope.Limit > 0 {
-					permission = fmt.Sprintf("%s (limit: %d)", permission, scope.Limit)
-				}
-				fmt.Printf("    - %s: %s\n", scopeSlug, permission)
-			}
-		}
-	} else {
-		fmt.Println("No feature entitlements configured for this license.")
-		fmt.Println("Configure a product, plan, and features in the license server")
-		fmt.Println("to enable feature-based access control.")
-	}
-
-	// Step 6: Demonstrate feature checking
-	fmt.Println()
-	fmt.Println("=== Feature Checks ===")
-
-	features := []string{"gui", "cli", "api", "premium"}
-	for _, feat := range features {
-		if license.HasFeature(feat) {
-			fmt.Printf("✅ Feature '%s' is available\n", feat)
-		} else {
-			fmt.Printf("❌ Feature '%s' is not available\n", feat)
-		}
-	}
-
-	// Step 7: Demonstrate scope checking
-	fmt.Println()
-	fmt.Println("=== Scope Checks ===")
-
-	scopes := [][2]string{
-		{"gui", "list"},
-		{"gui", "create"},
-		{"gui", "update"},
-		{"gui", "delete"},
-		{"api", "read"},
-		{"api", "write"},
-	}
-
-	for _, scope := range scopes {
-		feature, scopeName := scope[0], scope[1]
-		allowed, limit := license.CanPerform(feature, scopeName)
-		if allowed {
-			if limit > 0 {
-				fmt.Printf("✅ Can %s:%s (limit: %d)\n", feature, scopeName, limit)
-			} else {
-				fmt.Printf("✅ Can %s:%s\n", feature, scopeName)
-			}
-		} else {
-			fmt.Printf("❌ Cannot %s:%s\n", feature, scopeName)
-		}
-	}
-
-	fmt.Println()
-	fmt.Println("=== Done ===")
-
-	// Display credentials for saving (only if we have them from activation)
-	if credEmail != "" && credClientID != "" && credLicenseKey != "" {
-		fmt.Println()
-		fmt.Println("═══════════════════════════════════════════════════════════════")
-		fmt.Println("📄 Save the following credentials for future use:")
-		fmt.Printf("   File: license-%s.json\n", license.ClientID)
-		fmt.Println("   Content:")
-		fmt.Println("   ─────────────────────────────────────────────────────────────")
-		credJSON := fmt.Sprintf(`{
-  "email": "%s",
-  "client_id": "%s",
-  "license_key": "%s"
-}`, credEmail, credClientID, credLicenseKey)
-		fmt.Println(credJSON)
-		fmt.Println("   ─────────────────────────────────────────────────────────────")
-		fmt.Printf("   Usage: go run main.go --license-file license-%s.json\n", license.ClientID)
-		fmt.Println("═══════════════════════════════════════════════════════════════")
-	}
+	// Run has executed the handler and we're done.
+	return
 }

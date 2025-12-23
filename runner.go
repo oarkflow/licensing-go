@@ -62,62 +62,17 @@ func Run(cfg Config, handler LicensedAppFunc) {
 	os.Args = stripLicenseFlags(os.Args)
 
 	clientCfg := ResolveClientConfig(cfg)
-	// Create licensing client
-	client, err := NewClient(clientCfg)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create licensing client")
-	}
 	ctx := context.Background()
 	var licenseData *LicenseData
-	var email, clientID, licenseKey string
-	var hasFileCredentials bool
-	if cfg.LicenseFile != "" {
-		creds, err := LoadCredentialsFile(cfg.LicenseFile)
-		if err != nil {
-			log.Fatal().Err(err).Msg("failed to load license file")
-		}
-		hasFileCredentials = true
-		email = creds.Email
-		clientID = creds.ClientID
-		licenseKey = creds.LicenseKey
-	}
-	creds := &Credentials{
-		Email:      email,
-		ClientID:   clientID,
-		LicenseKey: licenseKey,
-	}
-	// Check if already activated
-	if client.IsActivated() {
-		// Verify existing license
-		licenseData, err = client.Verify()
-		if err != nil {
-			// Check if server is unavailable - if so, don't force reactivation
-			if errors.Is(err, ErrServerUnavailable) {
-				log.Warn().Err(err).Msg("license server unavailable, cannot verify license")
-				log.Fatal().Msg("please check your network connection and try again")
-			}
-			log.Warn().Err(err).Msg("license verification failed, attempting reactivation")
 
-			// Try to reactivate
-			licenseData, err = attemptActivation(client)
-			if err != nil {
-				log.Fatal().Err(err).Msg("license activation failed")
-			}
+	// Use centralized activation logic which handles precedence (stdin -> file -> interactive)
+	licenseData, err := EnsureActivated(clientCfg)
+	if err != nil {
+		if errors.Is(err, ErrServerUnavailable) {
+			log.Warn().Err(err).Msg("license server unavailable, cannot verify license")
+			log.Fatal().Msg("please check your network connection and try again")
 		}
-	} else {
-		if hasFileCredentials {
-			// Not activated, try to activate
-			licenseData, err = attemptActivation(client, creds)
-			if err != nil {
-				log.Fatal().Err(err).Msg("license activation failed")
-			}
-		} else {
-			licenseData, err = attemptActivation(client)
-			if err != nil {
-				log.Fatal().Err(err).Msg("license activation failed")
-			}
-		}
-
+		log.Fatal().Err(err).Msg("license activation failed")
 	}
 	// Check trial status and warn if expiring soon
 	if licenseData.IsTrial {

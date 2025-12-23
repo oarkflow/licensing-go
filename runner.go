@@ -64,7 +64,23 @@ func Run(cfg Config, handler LicensedAppFunc) {
 	}
 	ctx := context.Background()
 	var licenseData *LicenseData
-
+	var email, clientID, licenseKey string
+	var hasFileCredentials bool
+	if cfg.LicenseFile != "" {
+		creds, err := LoadCredentialsFile(cfg.LicenseFile)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to load license file")
+		}
+		hasFileCredentials = true
+		email = creds.Email
+		clientID = creds.ClientID
+		licenseKey = creds.LicenseKey
+	}
+	creds := &Credentials{
+		Email:      email,
+		ClientID:   clientID,
+		LicenseKey: licenseKey,
+	}
 	// Check if already activated
 	if client.IsActivated() {
 		// Verify existing license
@@ -76,6 +92,7 @@ func Run(cfg Config, handler LicensedAppFunc) {
 				log.Fatal().Msg("please check your network connection and try again")
 			}
 			log.Warn().Err(err).Msg("license verification failed, attempting reactivation")
+
 			// Try to reactivate
 			licenseData, err = attemptActivation(client)
 			if err != nil {
@@ -83,11 +100,19 @@ func Run(cfg Config, handler LicensedAppFunc) {
 			}
 		}
 	} else {
-		// Not activated, try to activate
-		licenseData, err = attemptActivation(client)
-		if err != nil {
-			log.Fatal().Err(err).Msg("license activation failed")
+		if hasFileCredentials {
+			// Not activated, try to activate
+			licenseData, err = attemptActivation(client, creds)
+			if err != nil {
+				log.Fatal().Err(err).Msg("license activation failed")
+			}
+		} else {
+			licenseData, err = attemptActivation(client)
+			if err != nil {
+				log.Fatal().Err(err).Msg("license activation failed")
+			}
 		}
+
 	}
 	// Check trial status and warn if expiring soon
 	if licenseData.IsTrial {
@@ -119,20 +144,25 @@ func Run(cfg Config, handler LicensedAppFunc) {
 }
 
 // attemptActivation tries to activate the license using available credentials
-func attemptActivation(client *Client) (*LicenseData, error) {
+func attemptActivation(client *Client, credentials ...*Credentials) (*LicenseData, error) {
 	// Show device fingerprint first
 	fingerprint, err := client.GetDeviceFingerprint()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get device fingerprint: %w", err)
 	}
 	fmt.Println()
+	var creds *Credentials
 	fmt.Println("🔐 License Activation Required")
 	fmt.Printf("📱 Device Fingerprint: %s\n", fingerprint)
 	fmt.Println()
 
-	creds, err := ResolveCredentials()
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve credentials: %w", err)
+	if len(credentials) > 0 {
+		creds = credentials[0]
+	} else {
+		creds, err = ResolveCredentials()
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve credentials: %w", err)
+		}
 	}
 
 	// If no credentials found, prompt the user with interactive form

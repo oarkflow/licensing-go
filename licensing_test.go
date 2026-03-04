@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
+	"errors"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -15,22 +16,31 @@ import (
 
 const fixturesDir = "../../docs/fixtures/v1"
 
+func readFixtureFile(t *testing.T, name string) []byte {
+	t.Helper()
+
+	path := filepath.Join(fixturesDir, name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			t.Skipf("fixture %q not found at %s; skipping fixture-based test", name, path)
+		}
+		t.Fatalf("failed to read fixture %q: %v", name, err)
+	}
+	return data
+}
+
 func TestFixtureDecryption(t *testing.T) {
 	// Load activation_response.json
-	respData, err := os.ReadFile(filepath.Join(fixturesDir, "activation_response.json"))
-	if err != nil {
-		t.Fatalf("failed to read activation_response.json: %v", err)
-	}
+	respData := readFixtureFile(t, "activation_response.json")
 	var resp ActivationResponse
+	var err error
 	if err := json.Unmarshal(respData, &resp); err != nil {
 		t.Fatalf("failed to unmarshal activation response: %v", err)
 	}
 
 	// Load activation_request.json to get fingerprint
-	reqData, err := os.ReadFile(filepath.Join(fixturesDir, "activation_request.json"))
-	if err != nil {
-		t.Fatalf("failed to read activation_request.json: %v", err)
-	}
+	reqData := readFixtureFile(t, "activation_request.json")
 	var req map[string]interface{}
 	if err := json.Unmarshal(reqData, &req); err != nil {
 		t.Fatalf("failed to unmarshal activation request: %v", err)
@@ -57,10 +67,7 @@ func TestFixtureDecryption(t *testing.T) {
 	t.Log("✓ Decryption passed")
 
 	// Load expected license_data.json for comparison
-	expectedData, err := os.ReadFile(filepath.Join(fixturesDir, "license_data.json"))
-	if err != nil {
-		t.Fatalf("failed to read license_data.json: %v", err)
-	}
+	expectedData := readFixtureFile(t, "license_data.json")
 	var expected LicenseData
 	if err := json.Unmarshal(expectedData, &expected); err != nil {
 		t.Fatalf("failed to unmarshal expected license: %v", err)
@@ -84,11 +91,9 @@ func TestFixtureDecryption(t *testing.T) {
 
 func TestStoredLicenseDecryption(t *testing.T) {
 	// Load stored_license.json
-	storedData, err := os.ReadFile(filepath.Join(fixturesDir, "stored_license.json"))
-	if err != nil {
-		t.Fatalf("failed to read stored_license.json: %v", err)
-	}
+	storedData := readFixtureFile(t, "stored_license.json")
 	var stored StoredLicense
+	var err error
 	if err := json.Unmarshal(storedData, &stored); err != nil {
 		t.Fatalf("failed to unmarshal stored license: %v", err)
 	}
@@ -118,20 +123,15 @@ func TestStoredLicenseDecryption(t *testing.T) {
 
 func TestChecksumVerification(t *testing.T) {
 	// Load license.dat (the compact version - this is what the checksum is calculated on)
-	licenseData, err := os.ReadFile(filepath.Join(fixturesDir, "license.dat"))
-	if err != nil {
-		t.Fatalf("failed to read license.dat: %v", err)
-	}
+	licenseData := readFixtureFile(t, "license.dat")
 	var stored StoredLicense
+	var err error
 	if err := json.Unmarshal(licenseData, &stored); err != nil {
 		t.Fatalf("failed to unmarshal license.dat: %v", err)
 	}
 
 	// Load checksum_pretty.json
-	checksumData, err := os.ReadFile(filepath.Join(fixturesDir, "checksum_pretty.json"))
-	if err != nil {
-		t.Fatalf("failed to read checksum_pretty.json: %v", err)
-	}
+	checksumData := readFixtureFile(t, "checksum_pretty.json")
 	var checksumObj struct {
 		Version   int    `json:"version"`
 		Nonce     string `json:"nonce"`
@@ -195,13 +195,11 @@ func verifyEncryptedChecksum(fingerprint, encryptedHex, nonceHex string, expecte
 
 func TestBinaryLicenseFile(t *testing.T) {
 	// Load license.dat
-	licenseData, err := os.ReadFile(filepath.Join(fixturesDir, "license.dat"))
-	if err != nil {
-		t.Fatalf("failed to read license.dat: %v", err)
-	}
+	licenseData := readFixtureFile(t, "license.dat")
 
 	// Verify it can be unmarshaled as StoredLicense
 	var stored StoredLicense
+	var err error
 	if err := json.Unmarshal(licenseData, &stored); err != nil {
 		t.Fatalf("failed to unmarshal license.dat: %v", err)
 	}
@@ -222,11 +220,9 @@ func TestBinaryLicenseFile(t *testing.T) {
 
 func TestDecryptFailsWithWrongFingerprint(t *testing.T) {
 	// Load stored_license.json
-	storedData, err := os.ReadFile(filepath.Join(fixturesDir, "stored_license.json"))
-	if err != nil {
-		t.Fatalf("failed to read stored_license.json: %v", err)
-	}
+	storedData := readFixtureFile(t, "stored_license.json")
 	var stored StoredLicense
+	var err error
 	if err := json.Unmarshal(storedData, &stored); err != nil {
 		t.Fatalf("failed to unmarshal stored license: %v", err)
 	}

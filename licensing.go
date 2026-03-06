@@ -123,7 +123,8 @@ type (
 
 // Re-export constants.
 const (
-	// EnvServerURL is the environment variable for the licensing server URL.
+	// EnvServerURL is kept for backward compatibility only.
+	// This wrapper does not read environment variables for licensing configuration.
 	EnvServerURL = client.EnvServerURL
 
 	// DefaultLicenseFile is the default license file name.
@@ -170,7 +171,7 @@ var (
 
 // NewClient creates a new licensing client with the given configuration.
 func NewClient(cfg Config) (*Client, error) {
-	return client.New(cfg)
+	return client.New(ResolveClientConfig(cfg))
 }
 
 // LoadCredentialsFile loads license activation credentials from a JSON file.

@@ -56,22 +56,28 @@ package main
 import (
     "log"
     "os"
+    "path/filepath"
     "time"
 
     licensing "github.com/oarkflow/licensing-go"
 )
 
 func main() {
+    homeDir, err := os.UserHomeDir()
+    if err != nil {
+        log.Fatalf("failed to resolve home directory: %v", err)
+    }
+
     // Create client with security features
     client, err := licensing.NewClient(licensing.Config{
         ServerURL:          "https://licensing.example.com",
-        ConfigDir:          os.Getenv("HOME") + "/.myapp",
+        ConfigDir:          filepath.Join(homeDir, ".myapp"),
         LicenseFile:        ".license.dat",
         AppName:            "MyApp",
         AppVersion:         "2.0.0",
 
         // Security features
-        SSHKeyPath:         os.Getenv("HOME") + "/.ssh/licensing_client",
+        SSHKeyPath:         filepath.Join(homeDir, ".ssh", "licensing_client"),
         ClientID:           "client-123",
         TamperDetection:    true,
         CertPinning:        true,
@@ -119,15 +125,21 @@ package main
 import (
     "log"
     "os"
+    "path/filepath"
 
     licensing "github.com/oarkflow/licensing-go"
 )
 
 func main() {
+    homeDir, err := os.UserHomeDir()
+    if err != nil {
+        log.Fatalf("failed to resolve home directory: %v", err)
+    }
+
     // Create client with configuration
     client, err := licensing.New(licensing.Config{
         ServerURL:   "https://licensing.example.com",
-        ConfigDir:   os.Getenv("HOME") + "/.myapp",
+        ConfigDir:   filepath.Join(homeDir, ".myapp"),
         LicenseFile: ".license.dat",
         AppName:     "MyApp",
         AppVersion:  "1.0.0",
@@ -297,20 +309,9 @@ type Config struct {
 
 ### Environment Variables
 
-The SDK respects these environment variables:
+This wrapper does not use environment variables for licensing configuration or credential resolution.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `LICENSE_CLIENT_SERVER` | License server URL | `https://localhost:6601` |
-| `LICENSE_CLIENT_CONFIG_DIR` | License storage directory | `~/.licensing` |
-| `LICENSE_CLIENT_LICENSE_FILE` | License filename | `.license.dat` |
-| `LICENSE_CLIENT_EMAIL` | Activation email | — |
-| `LICENSE_CLIENT_ID` | Client identifier | — |
-| `LICENSE_CLIENT_LICENSE_KEY` | License key | — |
-| `LICENSE_CLIENT_SSH_KEY` | Path to SSH private key | — |
-| `LICENSE_CLIENT_ALLOW_INSECURE_HTTP` | Allow non-TLS | `false` |
-| `LICENSE_CLIENT_TAMPER_DETECTION` | Enable tamper detection | `false` |
-| `LICENSE_CLIENT_CERT_PINNING` | Enable certificate pinning | `false` |
+Set licensing values explicitly in `licensing.Config`, provide credentials interactively, pipe JSON credentials to stdin, or load a credentials file intentionally.
 
 ## API Reference
 
@@ -851,9 +852,9 @@ if time.Until(license.ExpiresAt) < 7*24*time.Hour {
 licenseKey := "ABCD-EFGH-..."
 sshKey := "/home/hardcoded/.ssh/key"
 
-// ✅ Use environment variables or config files
-licenseKey := os.Getenv("LICENSE_KEY")
-sshKey := os.Getenv("SSH_KEY_PATH")
+// ✅ Load them from a secure prompt, OS keychain, or a protected config file
+licenseKey := loadLicenseKeyFromKeychain()
+sshKey := loadSSHKeyPathFromSecureConfig()
 ```
 
 ### 9. Use Multi-Layer Verification

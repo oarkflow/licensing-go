@@ -5,9 +5,9 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
-	"errors"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -271,5 +271,21 @@ func TestCanPerformWithContextSDK(t *testing.T) {
 	ok, _, _ = lic.CanPerformWithContext("file", "export", UsageContext{SubjectType: SubjectTypeUser, SubjectID: "user1", Amount: 4})
 	if ok {
 		t.Fatal("user 4 should be denied")
+	}
+}
+
+func TestNewClientIgnoresServerURLEnvironmentVariable(t *testing.T) {
+	t.Setenv(EnvServerURL, "://definitely-not-a-valid-url")
+
+	cfg := Config{
+		ConfigDir: t.TempDir(),
+	}
+
+	c, err := NewClient(cfg)
+	if err != nil {
+		t.Fatalf("expected env override to be ignored, got error: %v", err)
+	}
+	if c == nil {
+		t.Fatal("expected client to be created")
 	}
 }

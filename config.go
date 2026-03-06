@@ -18,6 +18,9 @@ func ResolveClientConfig(cfg Config) Config {
 	if cfg.HTTPTimeout == 0 {
 		cfg.HTTPTimeout = 15 * time.Second
 	}
+	if cfg.ServerURL == "" {
+		cfg.ServerURL = DefaultServerURL
+	}
 	return cfg
 }
 

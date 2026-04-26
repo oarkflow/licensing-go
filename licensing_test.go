@@ -154,12 +154,12 @@ func TestChecksumVerification(t *testing.T) {
 	t.Log("✓ Encrypted checksum verification passed")
 }
 
-// checksumKeySalt is the constant used in the licensing library
-const checksumKeySalt = "github.com/oarkflow/licensing/client-checksum/v1"
+// checksumKeySaltTest is the constant used in the licensing library
+const checksumKeySaltTest = "github.com/oarkflow/licensing/client-checksum/v1"
 
 func verifyEncryptedChecksum(fingerprint, encryptedHex, nonceHex string, expectedHash []byte) error {
-	// Derive key: SHA256(checksumKeySalt + fingerprint)
-	keyMaterial := checksumKeySalt + fingerprint
+	// Derive key: SHA256(checksumKeySaltTest + fingerprint)
+	keyMaterial := checksumKeySaltTest + fingerprint
 	key := sha256.Sum256([]byte(keyMaterial))
 
 	// Decode encrypted hash and nonce

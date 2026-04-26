@@ -58,6 +58,8 @@
 package licensing
 
 import (
+	"path/filepath"
+
 	"github.com/oarkflow/licensing/pkg/client"
 	off "github.com/oarkflow/licensing/pkg/client/offline"
 )
@@ -66,9 +68,6 @@ import (
 type (
 	// Config controls how the licensing client persists data and contacts the server.
 	Config = client.Config
-
-	// Client manages license activation and verification for Go applications.
-	Client = client.Client
 
 	// LicenseData is the decrypted license information consumed by applications.
 	LicenseData = client.LicenseData
@@ -169,9 +168,35 @@ var (
 	ErrServerUnavailable = client.ErrServerUnavailable
 )
 
+// Client manages license activation, verification, and coupon redemption for Go applications.
+type Client struct {
+	*client.Client
+	config       Config
+	licensePath  string
+	checksumPath string
+}
+
 // NewClient creates a new licensing client with the given configuration.
 func NewClient(cfg Config) (*Client, error) {
-	return client.New(ResolveClientConfig(cfg))
+	resolved := ResolveClientConfig(cfg)
+	if resolved.LicenseFile == "" {
+		resolved.LicenseFile = DefaultLicenseFile
+	}
+	inner, err := client.New(resolved)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{
+		Client:       inner,
+		config:       resolved,
+		licensePath:  filepath.Join(resolved.ConfigDir, resolved.LicenseFile),
+		checksumPath: filepath.Join(resolved.ConfigDir, resolved.LicenseFile+".chk"),
+	}, nil
+}
+
+// New creates a new licensing client with the given configuration.
+func New(cfg Config) (*Client, error) {
+	return NewClient(cfg)
 }
 
 // LoadCredentialsFile loads license activation credentials from a JSON file.

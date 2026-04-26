@@ -62,8 +62,8 @@ github.com/muesli/cancelreader v0.2.2 h1:3I4Kt4BQjOR54NavqnDogx/MIoWBFa0StPA8ELU
 github.com/muesli/cancelreader v0.2.2/go.mod h1:3XuTXfFS2VjM+HTLZY9Ak0l6eUKfijIfMUZ4EgX0QYo=
 github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc=
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
-github.com/oarkflow/licensing v0.0.27 h1:SGW1YmwKvMDwZunbw/7jFZxyp3cKPk0dLTOuVqitzhI=
-github.com/oarkflow/licensing v0.0.27/go.mod h1:FsEdw+GbHahk3Iy/a3KJ7PjFIXuTunBybJnwI1hbOUI=
+github.com/oarkflow/licensing v0.0.28 h1:ZLgm86LQTH2pU5MBdI0Deiv97CPlvSYRimidXaKi27I=
+github.com/oarkflow/licensing v0.0.28/go.mod h1:FsEdw+GbHahk3Iy/a3KJ7PjFIXuTunBybJnwI1hbOUI=
 github.com/phuslu/log v1.0.121 h1:3QlfHf/UG+QArETQFUhpHAn4my7Ik2T2zbK5UqG/amM=
 github.com/phuslu/log v1.0.121/go.mod h1:F8osGJADo5qLK/0F88djWwdyoZZ9xDJQL1HYRHFEkS0=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=

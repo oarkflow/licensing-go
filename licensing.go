@@ -113,6 +113,10 @@ type (
 
 	// TrialStatus represents the current status of a trial license.
 	TrialStatus = client.TrialStatus
+
+	// DeviceIdentity describes the proof-key-backed local identity used for activation.
+	DeviceIdentity = client.DeviceIdentity
+
 	// Types for usage restrictions exported from the core client
 	ScopeRestriction     = client.ScopeRestriction
 	UsageRestrictionType = client.UsageRestrictionType

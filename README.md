@@ -7,7 +7,7 @@ A Go SDK for integrating hardware-bound software licensing into Go applications 
 ### Core Licensing
 - 🔐 **AES-256-GCM encryption** for secure license transport and storage
 - ✅ **RSA-PSS signature verification** to ensure license authenticity
-- 🖥️ **Hardware fingerprinting** for device-bound licenses
+- 🖥️ **Device Proof v2 fingerprinting** for device-bound licenses
 - ⏰ **Background verification** with configurable check modes
 - 🔄 **Automatic retry** with exponential backoff for network failures
 - 📦 **Zero external dependencies** for crypto operations
@@ -20,7 +20,7 @@ A Go SDK for integrating hardware-bound software licensing into Go applications 
 - 🔐 **Multi-Layer Verification** (signature, integrity, hardware, time)
 - 🗝️ **Key Rotation** support for long-lived deployments
 - 📴 **Offline Grace Period** with configurable limits
-- 🎯 **Hardware Binding** with multiple fingerprint strategies
+- 🎯 **Device Binding** with TPM, OS keyring, and software key providers
 
 ## Requirements
 
@@ -302,8 +302,11 @@ type Config struct {
     OfflineGracePeriod time.Duration // Grace period for offline validation (default: 7 days)
     MaxOfflineDays     int           // Maximum offline days allowed (default: 30)
 
-    // Hardware Fingerprinting
-    FingerprintStrategy string       // "auto", "cpu-serial", "mac-address", "disk-serial"
+    // Device Proof v2 identity
+    DeviceKeyProvider string        // "auto", "tpm", "os", or "software"
+    DeviceKeyFile     string        // Software fallback key file
+    DeviceKeyName     string        // OS keyring key label
+    TPMDevice         string        // TPM path when forcing TPM
 }
 ```
 
@@ -900,8 +903,18 @@ if err := client.Activate(...); err != nil {
 ### Device Fingerprint
 
 ```go
-fingerprint = SHA256("HOST:<hostname>|OS:<os>|ARCH:<arch>|MAC:<mac>|CPU:<cpu_hash>")
+fingerprint = SHA256(device_proof_public_key)
 ```
+
+The private key is selected in this order when `DeviceKeyProvider` is `auto`:
+
+1. TPM 2.0 hardware key.
+2. OS keyring/keychain key.
+3. Software Ed25519 key file with `0600` permissions.
+
+Host hardware identifiers are exposed only as diagnostic labels. Server authorization
+depends on proof of possession of the registered private key, so a copied license
+without the device key fails verification.
 
 ### Multi-Layer Verification
 

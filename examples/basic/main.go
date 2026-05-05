@@ -16,7 +16,7 @@ func main() {
 	os.Setenv("PG_DISABLE_RATE_LIMIT", "1")
 	serverURL := flag.String("server", "http://localhost:6601", "License server URL (use HTTPS in production)")
 	insecure := flag.Bool("insecure", false, "Allow insecure HTTP (dev only, not recommended)")
-	productID := flag.String("product-id", "processgate", "Product ID for trial (optional)")
+	productID := flag.String("product-id", "secretr", "Product ID or slug to validate the license against")
 	licenseFile := flag.String("license-file", "", "Path to JSON file with license credentials")
 	flag.Parse()
 	cfg := licensing.Config{

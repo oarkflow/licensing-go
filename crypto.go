@@ -134,23 +134,12 @@ func VerifyStoredLicenseSignature(stored *StoredLicense) error {
 		return fmt.Errorf("public key is not RSA")
 	}
 
-	// Prefer verification over (encryptedData || deviceFingerprint) to ensure the
-	// fingerprint stored in the license file has not been tampered with. Fall
-	// back to legacy single-field signature verification when necessary.
+	// Verify over (encryptedData || deviceFingerprint) to ensure the fingerprint
+	// stored in the license file has not been tampered with.
 	combined := append(stored.EncryptedData, []byte(strings.TrimSpace(stored.DeviceFingerprint))...)
 	combinedHash := sha256.Sum256(combined)
-	err = rsa.VerifyPSS(rsaPub, crypto.SHA256, combinedHash[:], stored.Signature, nil)
-	if err != nil {
-		// Try legacy verification
-		legacyHash := sha256.Sum256(stored.EncryptedData)
-		if err2 := rsa.VerifyPSS(rsaPub, crypto.SHA256, legacyHash[:], stored.Signature, nil); err2 != nil {
-			return fmt.Errorf("signature verification failed (tried combined and legacy): %w / %v", err, err2)
-		}
-		// Legacy passed — warn that fingerprint not covered by signature
-		// but accept legacy signature for backward compatibility.
-		// Consumers should consider updating server to sign the fingerprint.
-		fmt.Printf("Warning: signature validated using legacy method; device fingerprint not bound by signature\n")
-		return nil
+	if err := rsa.VerifyPSS(rsaPub, crypto.SHA256, combinedHash[:], stored.Signature, nil); err != nil {
+		return fmt.Errorf("signature verification failed: %w", err)
 	}
 
 	return nil

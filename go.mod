@@ -4,7 +4,7 @@ go 1.26.2
 
 require github.com/charmbracelet/huh v1.0.0
 
-require github.com/oarkflow/licensing v0.0.30
+require github.com/oarkflow/licensing v0.0.31
 
 require (
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect

@@ -1,20 +1,19 @@
-// Package licensing provides a secure Go SDK for the hardware-key licensing service.
+// Package licensing provides a secure Go SDK for the device-bound licensing service.
 //
-// This package provides enterprise-grade security features including:
-// - SSH key authentication
-// - TLS 1.3 with certificate pinning
-// - Multi-layer license verification
-// - Tamper detection
-// - Automatic key rotation support
-// - Comprehensive audit logging
+// This package provides:
+// - Device Proof v2 authentication with TPM, OS keyring, or software keys
+// - TLS connections with optional custom CA configuration
+// - RSA-PSS license signature verification
+// - AES-GCM encrypted local license storage
+// - Encrypted checksum verification for local tamper detection
+// - Background verification scheduling
 //
 // # Quick Start
 //
 //	cfg := licensing.Config{
-//	    ServerURL: "https://licensing.example.com",
-//	    ProductID: "my-product",
-//	    SSHKeyPath: "/path/to/client_key",  // Optional: SSH key authentication
-//	    CertPinning: true,                   // Optional: Enable certificate pinning
+//	    ServerURL:         "https://licensing.example.com",
+//	    ProductID:         "my-product",
+//	    DeviceKeyProvider: "auto",
 //	}
 //	client, err := licensing.NewClient(cfg)
 //	if err != nil {
@@ -27,7 +26,7 @@
 //	    log.Fatal(err)
 //	}
 //
-//	// Verify with multi-layer verification
+//	// Verify the encrypted, device-bound local license.
 //	license, err := client.Verify()
 //	if err != nil {
 //	    log.Fatal(err)
@@ -36,25 +35,20 @@
 //
 // # Security Features
 //
-// SSH Key Authentication:
+// Device Proof v2:
 //
 //	cfg := licensing.Config{
-//	    ServerURL: "https://licensing.example.com",
-//	    SSHKeyPath: "/home/user/.ssh/licensing_client",
-//	    ClientID: "client-12345",
+//	    ServerURL:         "https://licensing.example.com",
+//	    DeviceKeyProvider: "auto", // tpm, os, or software may be forced
+//	    DeviceKeyFile:     "device_ed25519.pem",
 //	}
 //
-// TLS Certificate Pinning:
+// TLS with Custom CA:
 //
 //	cfg := licensing.Config{
-//	    ServerURL: "https://licensing.example.com",
-//	    CertPinning: true,
-//	    PinnedCertHash: []byte{...}, // SHA256 hash of server cert
+//	    ServerURL:  "https://licensing.example.com",
+//	    CACertPath: "/path/to/ca.pem",
 //	}
-//
-// Tamper Detection:
-//
-//	client.EnableTamperDetection(true)
 package licensing
 
 import (
@@ -126,10 +120,6 @@ type (
 
 // Re-export constants.
 const (
-	// EnvServerURL is kept for backward compatibility only.
-	// This wrapper does not read environment variables for licensing configuration.
-	EnvServerURL = client.EnvServerURL
-
 	// DefaultLicenseFile is the default license file name.
 	DefaultLicenseFile = client.DefaultLicenseFile
 
@@ -165,6 +155,10 @@ const (
 	SubjectTypeUser    = client.SubjectTypeUser
 	SubjectTypeDevice  = client.SubjectTypeDevice
 )
+
+// EnvServerURL is kept for backward compatibility only.
+// This wrapper does not read environment variables for licensing configuration.
+const EnvServerURL = "LICENSE_CLIENT_SERVER"
 
 // Re-export errors.
 var (

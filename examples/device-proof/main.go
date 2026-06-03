@@ -2,25 +2,40 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
-	"os"
-	"strconv"
 
 	licensing "github.com/oarkflow/licensing-go"
 )
 
 func main() {
+	serverURL := flag.String("server", licensing.DefaultServerURL, "License server URL")
+	configDir := flag.String("config-dir", "", "Directory for license/device key storage")
+	licenseFile := flag.String("license-file", licensing.DefaultLicenseFile, "Local license filename")
+	productID := flag.String("product-id", "", "Product ID or slug")
+	insecure := flag.Bool("allow-insecure-http", false, "Allow insecure HTTP for local development")
+	deviceKeyProvider := flag.String("device-key-provider", "auto", "Device key provider: auto, tpm, os, or software")
+	deviceKeyFile := flag.String("device-key-file", "", "Software device key filename/path")
+	deviceKeyName := flag.String("device-key-name", "", "OS keyring key label")
+	tpmDevice := flag.String("tpm-device", "", "TPM device path when forcing TPM")
+	action := flag.String("action", "identity", "Action: identity, activate, verify, or trial")
+	email := flag.String("email", "", "Email for activation or trial")
+	clientID := flag.String("client-id", "", "Client ID for activation")
+	licenseKey := flag.String("license-key", "", "License key for activation")
+	planID := flag.String("plan-id", "", "Plan ID for trial activation")
+	flag.Parse()
+
 	cfg := licensing.Config{
-		ServerURL:         env("LICENSE_CLIENT_SERVER", licensing.DefaultServerURL),
-		ConfigDir:         env("LICENSE_CLIENT_CONFIG_DIR", ""),
-		LicenseFile:       env("LICENSE_CLIENT_LICENSE_FILE", licensing.DefaultLicenseFile),
-		ProductID:         env("LICENSE_CLIENT_PRODUCT_ID", ""),
-		AllowInsecureHTTP: envBool("LICENSE_CLIENT_ALLOW_INSECURE_HTTP"),
-		DeviceKeyProvider: env("LICENSE_CLIENT_DEVICE_KEY_PROVIDER", "auto"),
-		DeviceKeyFile:     env("LICENSE_CLIENT_DEVICE_KEY_FILE", ""),
-		DeviceKeyName:     env("LICENSE_CLIENT_DEVICE_KEY_NAME", ""),
-		TPMDevice:         env("LICENSE_CLIENT_TPM_DEVICE", ""),
+		ServerURL:         *serverURL,
+		ConfigDir:         *configDir,
+		LicenseFile:       *licenseFile,
+		ProductID:         *productID,
+		AllowInsecureHTTP: *insecure,
+		DeviceKeyProvider: *deviceKeyProvider,
+		DeviceKeyFile:     *deviceKeyFile,
+		DeviceKeyName:     *deviceKeyName,
+		TPMDevice:         *tpmDevice,
 	}
 
 	client, err := licensing.NewClient(cfg)
@@ -34,14 +49,14 @@ func main() {
 	}
 	printJSON("device identity", identity)
 
-	switch env("LICENSE_EXAMPLE_ACTION", "identity") {
+	switch *action {
 	case "identity":
 		return
 	case "activate":
-		email := mustEnv("LICENSE_CLIENT_EMAIL")
-		clientID := mustEnv("LICENSE_CLIENT_ID")
-		licenseKey := mustEnv("LICENSE_CLIENT_LICENSE_KEY")
-		if err := client.Activate(email, clientID, licenseKey); err != nil {
+		requireFlag("email", *email)
+		requireFlag("client-id", *clientID)
+		requireFlag("license-key", *licenseKey)
+		if err := client.Activate(*email, *clientID, *licenseKey); err != nil {
 			log.Fatal(err)
 		}
 		fmt.Println("activation succeeded")
@@ -52,39 +67,21 @@ func main() {
 		}
 		printJSON("license", license)
 	case "trial":
-		email := mustEnv("LICENSE_CLIENT_EMAIL")
-		license, err := client.RequestTrial(email, cfg.ProductID, env("LICENSE_CLIENT_PLAN_ID", ""), 0)
+		requireFlag("email", *email)
+		license, err := client.RequestTrial(*email, cfg.ProductID, *planID, 0)
 		if err != nil {
 			log.Fatal(err)
 		}
 		printJSON("trial license", license)
 	default:
-		log.Fatalf("unsupported LICENSE_EXAMPLE_ACTION %q", env("LICENSE_EXAMPLE_ACTION", ""))
+		log.Fatalf("unsupported action %q", *action)
 	}
 }
 
-func env(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func mustEnv(key string) string {
-	value := os.Getenv(key)
+func requireFlag(name, value string) {
 	if value == "" {
-		log.Fatalf("%s is required", key)
+		log.Fatalf("--%s is required", name)
 	}
-	return value
-}
-
-func envBool(key string) bool {
-	value := os.Getenv(key)
-	if value == "" {
-		return false
-	}
-	parsed, err := strconv.ParseBool(value)
-	return err == nil && parsed
 }
 
 func printJSON(label string, value any) {

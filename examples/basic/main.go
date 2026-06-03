@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -13,20 +12,29 @@ import (
 )
 
 func main() {
-	os.Setenv("PG_DISABLE_RATE_LIMIT", "1")
 	serverURL := flag.String("server", "http://localhost:6601", "License server URL (use HTTPS in production)")
+	configDir := flag.String("config-dir", "", "Directory for license/device key storage")
 	insecure := flag.Bool("insecure", false, "Allow insecure HTTP (dev only, not recommended)")
 	productID := flag.String("product-id", "secretr", "Product ID or slug to validate the license against")
 	licenseFile := flag.String("license-file", "", "Path to JSON file with license credentials")
+	deviceKeyProvider := flag.String("device-key-provider", "software", "Device key provider: auto, tpm, os, or software")
+	deviceKeyFile := flag.String("device-key-file", "", "Software device key filename/path")
+	deviceKeyName := flag.String("device-key-name", "", "OS keyring key label")
+	tpmDevice := flag.String("tpm-device", "", "TPM device path when forcing TPM")
 	flag.Parse()
 	cfg := licensing.Config{
 		ServerURL:         *serverURL,
+		ConfigDir:         *configDir,
 		AppName:           "BasicExample",
 		AppVersion:        "1.0.0",
 		HTTPTimeout:       15 * time.Second,
 		AllowInsecureHTTP: *insecure,
 		LicenseFile:       *licenseFile,
 		ProductID:         *productID,
+		DeviceKeyProvider: *deviceKeyProvider,
+		DeviceKeyFile:     *deviceKeyFile,
+		DeviceKeyName:     *deviceKeyName,
+		TPMDevice:         *tpmDevice,
 	}
 	licensing.Run(cfg, runApplication)
 }

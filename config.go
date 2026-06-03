@@ -6,16 +6,19 @@ import (
 	"time"
 )
 
-// ResolveClientConfig builds a Config with immutable security settings
+// ResolveClientConfig builds a Config with SDK defaults without reading environment variables.
 func ResolveClientConfig(cfg Config) Config {
 	home, _ := os.UserHomeDir()
 	if cfg.DefaultDir == "" && home != "" {
-		cfg.DefaultDir = ".licensing"
+		cfg.DefaultDir = DefaultConfigDir
 	}
 	if cfg.ConfigDir == "" && home != "" {
 		cfg.ConfigDir = filepath.Join(home, cfg.DefaultDir)
 	}
-	if cfg.HTTPTimeout == 0 {
+	if cfg.LicenseFile == "" {
+		cfg.LicenseFile = DefaultLicenseFile
+	}
+	if cfg.HTTPTimeout <= 0 {
 		cfg.HTTPTimeout = 15 * time.Second
 	}
 	if cfg.ServerURL == "" {

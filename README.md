@@ -12,15 +12,13 @@ A Go SDK for integrating hardware-bound software licensing into Go applications 
 - 🔄 **Automatic retry** with exponential backoff for network failures
 - 📦 **Zero external dependencies** for crypto operations
 
-### Security Features (New in v2.0)
-- 🔑 **SSH Key Authentication** using Ed25519 cryptography
-- 🛡️ **Tamper Detection** with multi-layer integrity verification
-- 🔒 **TLS 1.3** with optional certificate pinning
-- 📊 **Security Monitoring** and audit logging
-- 🔐 **Multi-Layer Verification** (signature, integrity, hardware, time)
-- 🗝️ **Key Rotation** support for long-lived deployments
-- 📴 **Offline Grace Period** with configurable limits
-- 🎯 **Device Binding** with TPM, OS keyring, and software key providers
+### Security Features
+- 🛡️ **Encrypted checksum validation** for local license tamper detection
+- 🔒 **TLS** with optional custom CA configuration
+- 🔐 **Device proof challenge signing** for activation, verification, and trials
+- 🗝️ **Device key persistence** through TPM, OS keyring, or software key files
+- 📴 **Offline signed bundle verification** with revocation manifest caching
+- 🎯 **Explicit configuration only** with no environment-variable fallback
 
 ## Requirements
 
@@ -29,26 +27,12 @@ A Go SDK for integrating hardware-bound software licensing into Go applications 
 ## Installation
 
 ```bash
-go get github.com/oarkflow/licensing-golang
+go get github.com/oarkflow/licensing-go
 ```
 
 ## Quick Start
 
-### 1. Generate SSH Keys (Recommended)
-
-For enhanced security, generate SSH keys for client authentication:
-
-```bash
-# Generate Ed25519 key pair
-ssh-keygen -t ed25519 -f ~/.ssh/licensing_client -N ""
-
-# Or use the SDK helper
-go run examples/secure/main.go --generate-key
-```
-
-Register your public key with the licensing server before activation.
-
-### 2. Basic Usage with SSH Authentication
+### 1. Basic Usage
 
 ```go
 package main
@@ -57,7 +41,6 @@ import (
     "log"
     "os"
     "path/filepath"
-    "time"
 
     licensing "github.com/oarkflow/licensing-go"
 )
@@ -68,21 +51,14 @@ func main() {
         log.Fatalf("failed to resolve home directory: %v", err)
     }
 
-    // Create client with security features
     client, err := licensing.NewClient(licensing.Config{
-        ServerURL:          "https://licensing.example.com",
-        ConfigDir:          filepath.Join(homeDir, ".myapp"),
-        LicenseFile:        ".license.dat",
-        AppName:            "MyApp",
-        AppVersion:         "2.0.0",
-
-        // Security features
-        SSHKeyPath:         filepath.Join(homeDir, ".ssh", "licensing_client"),
-        ClientID:           "client-123",
-        TamperDetection:    true,
-        CertPinning:        true,
-        OfflineGracePeriod: 7 * 24 * time.Hour,
-        MaxOfflineDays:     30,
+        ServerURL:         "https://licensing.example.com",
+        ConfigDir:         filepath.Join(homeDir, ".myapp"),
+        LicenseFile:       ".license.dat",
+        AppName:           "MyApp",
+        AppVersion:        "2.0.0",
+        ProductID:         "my-product",
+        DeviceKeyProvider: "auto",
     })
     if err != nil {
         log.Fatalf("failed to create client: %v", err)
@@ -90,7 +66,6 @@ func main() {
 
     // Check if already activated
     if !client.IsActivated() {
-        // Activate with SSH key authentication
         err := client.Activate(
             "user@example.com",
             "client-123",
@@ -101,23 +76,17 @@ func main() {
         }
     }
 
-    // Verify license with integrity checks
-    license, integrityResult, err := client.VerifyWithIntegrity()
+    license, err := client.Verify()
     if err != nil {
         log.Fatalf("verification failed: %v", err)
     }
 
-    if !integrityResult.IsValid {
-        log.Fatalf("integrity check failed: %v", integrityResult.FailedChecks)
-    }
-
     log.Printf("License: %s (plan: %s)", license.ID, license.PlanSlug)
     log.Printf("Expires: %s", license.ExpiresAt)
-    log.Printf("Integrity Score: %.2f%%", integrityResult.Score*100)
 }
 ```
 
-### 3. Feature Gating with Entitlements
+### 2. Feature Gating with Entitlements
 
 ```go
 package main
@@ -209,11 +178,6 @@ if feature, ok := license.GetFeature("api"); ok {
 ```go
 import (
     "context"
-### 4. Background Verification with Security Monitoring
-
-```go
-import (
-    "context"
     "log"
     "os"
     "os/signal"
@@ -224,57 +188,21 @@ import (
 func main() {
     client, _ := licensing.NewClient(cfg)
 
-    // Initial verification with integrity checks
-    license, integrityResult, err := client.VerifyWithIntegrity()
+    license, err := client.Verify()
     if err != nil {
         log.Fatalf("verification failed: %v", err)
     }
 
-    if !integrityResult.IsValid {
-        log.Fatalf("integrity check failed: score=%.2f%%", integrityResult.Score*100)
-    }
-
-    // Start background verification with security monitoring
     ctx, cancel := context.WithCancel(context.Background())
-    go client.RunBackgroundVerification(
-        ctx,
-        license,
-        log.Printf, // logging function
-        func(updated *licensing.LicenseData) {
-            // Handle license updates
-            log.Printf("License updated: %s", updated.ID)
+    defer cancel()
 
-            // Check security metrics
-            metrics := client.GetSecurityMetrics()
-            if metrics.TamperingAttempts > 0 {
-                log.Printf("WARNING: %d tampering attempts detected", metrics.TamperingAttempts)
-            }
-        },
-    )
+    go client.RunBackgroundVerification(ctx, license, log.Printf, func(updated *licensing.LicenseData) {
+        log.Printf("License updated: %s", updated.ID)
+    })
 
-    // Periodic security checks
-    ticker := time.NewTicker(15 * time.Minute)
-    go func() {
-        for {
-            select {
-            case <-ticker.C:
-                result := client.RunIntegrityChecks()
-                if result.TamperingDetected {
-                    log.Printf("ALERT: Tampering detected: %v", result.FailedChecks)
-                }
-            case <-ctx.Done():
-                return
-            }
-        }
-    }()
-
-    // Handle graceful shutdown
     sigCh := make(chan os.Signal, 1)
     signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
     <-sigCh
-
-    ticker.Stop()
-    cancel() // Stop background verification
 }
 ```
 
@@ -286,21 +214,15 @@ func main() {
 type Config struct {
     // Basic Configuration
     ConfigDir         string        // Directory for license storage (default: ~/.licensing)
+    DefaultDir        string        // Home-relative default config directory name
     LicenseFile       string        // License filename (default: .license.dat)
     ServerURL         string        // License server URL (default: https://localhost:6601)
     AppName           string        // Application name for User-Agent
     AppVersion        string        // Application version for User-Agent
+    ProductID         string        // Product ID or slug to validate against
     HTTPTimeout       time.Duration // HTTP request timeout (default: 15s)
     CACertPath        string        // Custom CA certificate path
     AllowInsecureHTTP bool          // Allow non-TLS connections (dev only!)
-
-    // Security Configuration (v2.0+)
-    SSHKeyPath         string        // Path to SSH private key for authentication
-    ClientID           string        // Client identifier for SSH auth
-    TamperDetection    bool          // Enable runtime tamper detection
-    CertPinning        bool          // Enable TLS certificate pinning
-    OfflineGracePeriod time.Duration // Grace period for offline validation (default: 7 days)
-    MaxOfflineDays     int           // Maximum offline days allowed (default: 30)
 
     // Device Proof v2 identity
     DeviceKeyProvider string        // "auto", "tpm", "os", or "software"
@@ -310,11 +232,11 @@ type Config struct {
 }
 ```
 
-### Environment Variables
+### No Environment Variable Configuration
 
-This wrapper does not use environment variables for licensing configuration or credential resolution.
+This wrapper does not use environment variables for licensing configuration or credential resolution. Set values explicitly in `licensing.Config`.
 
-Set licensing values explicitly in `licensing.Config`, provide credentials interactively, pipe JSON credentials to stdin, or load a credentials file intentionally.
+Credentials must come from an explicit call, an interactive prompt, piped JSON stdin, or an intentionally selected credentials file. `EnvServerURL` remains only as a backward-compatible constant for old callers; the SDK does not read it.
 
 ## API Reference
 
@@ -533,9 +455,21 @@ func (c *Client) IsActivated() bool
 // Activate activates with explicit credentials
 func (c *Client) Activate(email, clientID, licenseKey string) error
 
+// ActivateWithReplacementToken activates a replacement device with a one-time token
+func (c *Client) ActivateWithReplacementToken(email, clientID, licenseKey, replacementToken string) error
+
 // Verify checks license validity (online if due, offline otherwise)
 // Returns the license data and an error if invalid
 func (c *Client) Verify() (*LicenseData, error)
+
+// CurrentDeviceIdentity returns the proof-key-backed identity used by the SDK
+func (c *Client) CurrentDeviceIdentity() (*DeviceIdentity, error)
+
+// CheckTrialEligibility checks whether the current device can start a trial
+func (c *Client) CheckTrialEligibility(productID string) (*TrialCheckResponse, error)
+
+// RequestTrial requests and stores a trial license for the current device
+func (c *Client) RequestTrial(email, productID, planID string, trialDays int) (*LicenseData, error)
 
 // ServerURL returns the configured license server URL
 func (c *Client) ServerURL() string
@@ -566,6 +500,23 @@ func (ld *LicenseData) GetScope(featureSlug, scopeSlug string) (ScopeGrant, bool
 
 // CanPerform checks if an operation is allowed and returns the limit
 func (ld *LicenseData) CanPerform(featureSlug, scopeSlug string) (allowed bool, limit int)
+
+// CanPerformWithContext evaluates scoped usage restrictions
+func (ld *LicenseData) CanPerformWithContext(featureSlug, scopeSlug string, ctx UsageContext) (bool, int, string)
+```
+
+### Offline Verification
+
+```go
+offlineClient, err := licensing.NewOfflineClient(licensing.OfflineConfig{
+    ServerURL: "https://licensing.example.com",
+    CacheDir:  "/path/to/cache",
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+payload, err := offlineClient.VerifySignedBundle(ctx, bundleJSON, deviceFingerprint)
 ```
 
 ### Standalone Crypto Functions
@@ -749,87 +700,45 @@ func TestLicenseValidation(t *testing.T) {
 
 ## Security Best Practices
 
-### 1. Use SSH Key Authentication
+### 1. Use Device Proof Keys
 
-**Always use SSH keys** in production for enhanced security:
+```go
+client, err := licensing.NewClient(licensing.Config{
+    ServerURL:         "https://licensing.example.com",
+    ProductID:         "my-product",
+    DeviceKeyProvider: "auto",
+})
+```
+
+The device fingerprint is derived from the device proof public key. Keep the selected private key protected and persistent, especially in containers.
+
+### 2. Use TLS
+
+**Always use HTTPS in production** and configure a custom CA when needed:
 
 ```go
 client, err := licensing.NewClient(licensing.Config{
     ServerURL:  "https://licensing.example.com",
-    SSHKeyPath: "/path/to/private_key",
-    ClientID:   "your-client-id",
-})
-```
-
-Generate keys using:
-```bash
-# Using SDK
-go run examples/secure/main.go --generate-key
-
-# Or using ssh-keygen
-ssh-keygen -t ed25519 -f ~/.ssh/licensing_client -N ""
-```
-
-### 2. Enable Tamper Detection
-
-Enable runtime integrity monitoring to detect tampering attempts:
-
-```go
-client, err := licensing.NewClient(licensing.Config{
-    TamperDetection: true,
-    // ...
-})
-
-// Periodic integrity checks
-result := client.RunIntegrityChecks()
-if result.TamperingDetected {
-    log.Fatalf("Tampering detected: %v", result.FailedChecks)
-}
-```
-
-### 3. Use TLS with Certificate Pinning
-
-**Always use TLS in production** and consider certificate pinning:
-
-```go
-client, err := licensing.NewClient(licensing.Config{
-    ServerURL:   "https://licensing.example.com",
-    CertPinning: true,  // Enable certificate pinning
-    CACertPath:  "/path/to/ca-cert.pem",  // Optional: custom CA
+    CACertPath: "/path/to/ca-cert.pem",
 })
 
 // NEVER do this in production:
 // AllowInsecureHTTP: true  ❌
 ```
 
-### 4. Configure Offline Grace Period
+### 3. Use Offline Bundles Intentionally
 
-Set appropriate offline validation limits:
+Signed offline bundles can be verified locally and checked against a cached revocation manifest:
 
 ```go
-client, err := licensing.NewClient(licensing.Config{
-    OfflineGracePeriod: 7 * 24 * time.Hour,  // 7 days grace period
-    MaxOfflineDays:     30,                   // 30 days maximum
+offlineClient, err := licensing.NewOfflineClient(licensing.OfflineConfig{
+    ServerURL: "https://licensing.example.com",
+    CacheDir:  "/secure/cache",
 })
+payload, err := offlineClient.VerifySignedBundle(ctx, bundleJSON, deviceFingerprint)
 ```
 
-### 5. Monitor Security Metrics
-
-Regularly check security metrics for anomalies:
-
-```go
-metrics := client.GetSecurityMetrics()
-if metrics.TamperingAttempts > 0 {
-    log.Printf("WARNING: %d tampering attempts detected", metrics.TamperingAttempts)
-    // Take appropriate action (notify admin, block access, etc.)
-}
-if metrics.FailedVerifications > 10 {
-    log.Printf("WARNING: High failure rate: %d/%d",
-        metrics.FailedVerifications, metrics.TotalVerifications)
-}
-```
-
-### 6. Protect License Files
+### 4. Protect License Files
 
 The SDK automatically sets `0600` permissions on license files. Ensure the config directory is also protected:
 
@@ -837,7 +746,7 @@ The SDK automatically sets `0600` permissions on license files. Ensure the confi
 chmod 700 ~/.myapp
 ```
 
-### 7. Handle Expiration Proactively
+### 5. Handle Expiration Proactively
 
 Alert users before expiration:
 
@@ -848,34 +757,17 @@ if time.Until(license.ExpiresAt) < 7*24*time.Hour {
 }
 ```
 
-### 8. Don't Embed Secrets in Code
+### 6. Don't Embed Secrets in Code
 
 ```go
 // ❌ Don't do this
 licenseKey := "ABCD-EFGH-..."
-sshKey := "/home/hardcoded/.ssh/key"
 
 // ✅ Load them from a secure prompt, OS keychain, or a protected config file
 licenseKey := loadLicenseKeyFromKeychain()
-sshKey := loadSSHKeyPathFromSecureConfig()
 ```
 
-### 9. Use Multi-Layer Verification
-
-For critical applications, use `VerifyWithIntegrity()` instead of basic `Verify()`:
-
-```go
-// Basic verification (fast)
-license, err := client.Verify()
-
-// Multi-layer verification (recommended for security-critical apps)
-license, integrity, err := client.VerifyWithIntegrity()
-if err != nil || !integrity.IsValid {
-    log.Fatalf("Security verification failed")
-}
-```
-
-### 10. Implement Secure Error Handling
+### 7. Implement Secure Error Handling
 
 Don't expose detailed error messages to end users:
 
@@ -897,7 +789,7 @@ if err := client.Activate(...); err != nil {
 - **Transport Key**: `SHA-256(fingerprint + hex(nonce))` → 32-byte AES key
 - **Encryption**: AES-256-GCM with 12-byte nonce
 - **Signature**: RSA-PSS with SHA-256 (max salt length = 222 bytes for 2048-bit keys)
-- **SSH Authentication**: Ed25519 signature with SHA-512
+- **Device Proof**: Ed25519 or RSA-PSS challenge signatures
 - **Checksum Key**: `SHA-256("github.com/oarkflow/licensing/client-checksum/v1" + fingerprint)`
 
 ### Device Fingerprint
@@ -916,15 +808,15 @@ Host hardware identifiers are exposed only as diagnostic labels. Server authoriz
 depends on proof of possession of the registered private key, so a copied license
 without the device key fails verification.
 
-### Multi-Layer Verification
+### License Verification
 
-The SDK performs these checks during `VerifyWithIntegrity()`:
+The SDK performs these checks during `Verify()`:
 
-1. **Signature Layer**: Verify RSA-PSS signature on license data
-2. **Integrity Layer**: Check for file tampering and unauthorized modifications
-3. **Hardware Layer**: Validate device fingerprint matches
-4. **Time Layer**: Verify license not expired and within grace period
-5. **Network Layer**: Check revocation status (if online)
+1. **Signature Layer**: verify the RSA-PSS signature on stored license data.
+2. **Integrity Layer**: compare the encrypted checksum with the local license file.
+3. **Device Layer**: validate the proof-key-derived fingerprint matches this device.
+4. **Time Layer**: reject expired licenses.
+5. **Server Layer**: refresh with device proof when the license check schedule is due.
 
 ## Cryptographic Operations
 

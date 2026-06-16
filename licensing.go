@@ -52,6 +52,7 @@
 package licensing
 
 import (
+	"fmt"
 	"path/filepath"
 
 	"github.com/oarkflow/licensing/pkg/client"
@@ -60,9 +61,6 @@ import (
 
 // Re-export core types from the internal client package.
 type (
-	// Config controls how the licensing client persists data and contacts the server.
-	Config = client.Config
-
 	// LicenseData is the decrypted license information consumed by applications.
 	LicenseData = client.LicenseData
 
@@ -172,24 +170,30 @@ type Client struct {
 	config       Config
 	licensePath  string
 	checksumPath string
+
+	TamperEnabled      bool
+	TamperDetector     *TamperDetector
+	SecurityMetrics    *SecurityMetrics
+	KeyRotationManager *KeyRotationManager
 }
 
 // NewClient creates a new licensing client with the given configuration.
 func NewClient(cfg Config) (*Client, error) {
 	resolved := ResolveClientConfig(cfg)
-	if resolved.LicenseFile == "" {
-		resolved.LicenseFile = DefaultLicenseFile
-	}
-	inner, err := client.New(resolved)
+	inner, err := client.New(resolved.toClientConfig())
 	if err != nil {
 		return nil, err
 	}
-	return &Client{
+	c := &Client{
 		Client:       inner,
 		config:       resolved,
 		licensePath:  filepath.Join(resolved.ConfigDir, resolved.LicenseFile),
 		checksumPath: filepath.Join(resolved.ConfigDir, resolved.LicenseFile+".chk"),
-	}, nil
+	}
+	if cfg.TamperDetection {
+		c.EnableTamperDetection()
+	}
+	return c, nil
 }
 
 // New creates a new licensing client with the given configuration.
@@ -213,3 +217,57 @@ type (
 func NewOfflineClient(cfg OfflineConfig) (*OfflineClient, error) {
 	return off.New(cfg)
 }
+
+// RunIntegrityChecks performs immediate integrity checks and returns any failures.
+func (c *Client) RunIntegrityChecks() []TamperFailure {
+	if c.TamperDetector == nil {
+		c.TamperDetector = NewTamperDetector(0)
+	}
+	checkDebugger()
+	checkPermissions()
+	checkEnvironment()
+	return c.TamperDetector.Failures()
+}
+
+// EnableTamperDetection starts the background tamper detection goroutine.
+func (c *Client) EnableTamperDetection() {
+	if c.TamperDetector == nil {
+		c.TamperDetector = NewTamperDetector(0)
+	}
+	c.TamperDetector.Start()
+	c.TamperEnabled = true
+	if c.SecurityMetrics == nil {
+		c.SecurityMetrics = NewSecurityMetrics()
+	}
+}
+
+// VerifyWithIntegrity verifies the local license and runs integrity checks.
+// Returns the license data, integrity failures, and any error.
+func (c *Client) VerifyWithIntegrity() (*LicenseData, []TamperFailure, error) {
+	failures := c.RunIntegrityChecks()
+	if c.SecurityMetrics != nil {
+		c.SecurityMetrics.RecordTamperCheck(len(failures) == 0)
+	}
+
+	data, err := c.Verify()
+	success := err == nil && data != nil
+	if c.SecurityMetrics != nil {
+		c.SecurityMetrics.RecordValidation(success)
+	}
+
+	if err != nil {
+		return nil, failures, err
+	}
+	return data, failures, nil
+}
+
+// GetSecurityMetrics returns the current security metrics snapshot.
+func (c *Client) GetSecurityMetrics() (*SecurityMetricsSnapshot, error) {
+	if c.SecurityMetrics == nil {
+		return nil, fmt.Errorf("security metrics not initialized")
+	}
+	snap := c.SecurityMetrics.Snapshot()
+	return &snap, nil
+}
+
+

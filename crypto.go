@@ -30,12 +30,18 @@ func DecryptStoredLicense(stored *StoredLicense, currentFingerprint string) (*Li
 
 	// Ensure the fingerprint provided by the caller matches the fingerprint
 	// the license was originally issued to.
-	if strings.TrimSpace(stored.DeviceFingerprint) == "" {
-		return nil, nil, fmt.Errorf("stored license missing device fingerprint")
+	storedFingerprint, err := validateProofFingerprint(stored.DeviceFingerprint)
+	if err != nil {
+		return nil, nil, fmt.Errorf("stored license has invalid device fingerprint: %w", err)
 	}
-	if currentFingerprint != stored.DeviceFingerprint {
+	currentFingerprint, err = validateProofFingerprint(currentFingerprint)
+	if err != nil {
+		return nil, nil, fmt.Errorf("current device fingerprint invalid: %w", err)
+	}
+	if currentFingerprint != storedFingerprint {
 		return nil, nil, fmt.Errorf("device fingerprint mismatch - license is tied to different device")
 	}
+	stored.DeviceFingerprint = storedFingerprint
 
 	// Verify signature before attempting decryption
 	if err := VerifyStoredLicenseSignature(stored); err != nil {
@@ -151,6 +157,10 @@ func BuildStoredLicenseFromResponse(resp *ActivationResponse, fingerprint string
 	if resp == nil {
 		return nil, fmt.Errorf("activation response is nil")
 	}
+	fingerprint, err := validateProofFingerprint(fingerprint)
+	if err != nil {
+		return nil, err
+	}
 
 	encryptedData, err := hex.DecodeString(resp.EncryptedLicense)
 	if err != nil {
@@ -178,6 +188,34 @@ func BuildStoredLicenseFromResponse(resp *ActivationResponse, fingerprint string
 		DeviceFingerprint: fingerprint,
 		ExpiresAt:         resp.ExpiresAt,
 	}, nil
+}
+
+func validateProofFingerprint(fingerprint string) (string, error) {
+	fingerprint = normalizeProofFingerprint(fingerprint)
+	parts := strings.Split(fingerprint, ":")
+	if len(parts) != 4 || parts[0] != "fp" || parts[1] != "v2" {
+		return "", fmt.Errorf("invalid device fingerprint format")
+	}
+	switch parts[2] {
+	case "ed25519", "rsa-pss-sha256":
+	default:
+		return "", fmt.Errorf("unsupported device fingerprint algorithm")
+	}
+	if len(parts[3]) != 64 {
+		return "", fmt.Errorf("invalid device fingerprint hash length")
+	}
+	if _, err := hex.DecodeString(parts[3]); err != nil {
+		return "", fmt.Errorf("invalid device fingerprint hash: %w", err)
+	}
+	return fingerprint, nil
+}
+
+func normalizeProofFingerprint(fingerprint string) string {
+	parts := strings.Split(strings.TrimSpace(fingerprint), ":")
+	if len(parts) != 4 {
+		return strings.TrimSpace(fingerprint)
+	}
+	return strings.ToLower(parts[0]) + ":" + strings.ToLower(parts[1]) + ":" + strings.ToLower(parts[2]) + ":" + strings.ToLower(parts[3])
 }
 
 // GenerateEd25519KeyPair generates an Ed25519 key pair for SSH authentication.

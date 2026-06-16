@@ -235,6 +235,32 @@ func TestDecryptFailsWithWrongFingerprint(t *testing.T) {
 	t.Logf("✓ Decryption failed with wrong fingerprint as expected: %v", err)
 }
 
+func TestValidateProofFingerprintRejectsRawAndHardwareFingerprints(t *testing.T) {
+	for _, fingerprint := range []string{
+		"abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+		"hw:v1:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+		"fp:v2:md5:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+		"fp:v1:ed25519:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+	} {
+		if _, err := validateProofFingerprint(fingerprint); err == nil {
+			t.Fatalf("expected %q to be rejected", fingerprint)
+		}
+	}
+}
+
+func TestValidateProofFingerprintAcceptsSupportedFormats(t *testing.T) {
+	hash := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+	for _, fingerprint := range []string{
+		"fp:v2:ed25519:" + hash,
+		"fp:v2:rsa-pss-sha256:" + hash,
+		"FP:V2:ED25519:" + hash,
+	} {
+		if _, err := validateProofFingerprint(fingerprint); err != nil {
+			t.Fatalf("expected %q to be accepted: %v", fingerprint, err)
+		}
+	}
+}
+
 func TestCanPerformWithContextSDK(t *testing.T) {
 	lic := LicenseData{}
 	lic.Entitlements = &LicenseEntitlements{Features: map[string]FeatureGrant{

@@ -266,7 +266,7 @@ type LicenseData struct {
     RevokedAt          time.Time       // Revocation timestamp
     RevokeReason       string          // Revocation reason
     Devices            []LicenseDevice // Registered devices
-    DeviceFingerprint  string          // Current device fingerprint
+    DeviceFingerprint  string          // Current fp:v2 proof-key device fingerprint
     CheckMode          string          // Verification schedule
     CheckIntervalSecs  int64           // Custom interval (seconds)
     NextCheckAt        time.Time       // Next scheduled check
@@ -438,7 +438,7 @@ type StoredLicense struct {
     Nonce             []byte    // 12-byte GCM nonce
     Signature         []byte    // RSA-PSS signature
     PublicKey         []byte    // DER-encoded public key
-    DeviceFingerprint string    // Device fingerprint (hex)
+    DeviceFingerprint string    // Versioned proof-key fingerprint (fp:v2:<algorithm>:<hash>)
     ExpiresAt         time.Time // License expiration
 }
 ```
@@ -795,7 +795,7 @@ if err := client.Activate(...); err != nil {
 ### Device Fingerprint
 
 ```go
-fingerprint = SHA256(device_proof_public_key)
+fingerprint = "fp:v2:" + public_key_algorithm + ":" + lowercase_hex(SHA256(device_proof_public_key_bytes))
 ```
 
 The private key is selected in this order when `DeviceKeyProvider` is `auto`:

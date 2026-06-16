@@ -2,18 +2,22 @@ package licensing
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -222,8 +226,52 @@ func (c *Client) httpClient() *http.Client {
 	if c.config.AllowInsecureHTTP {
 		tlsConfig.InsecureSkipVerify = true
 	}
+	if c.config.PinnedCertHash != "" {
+		verifier := pinnedCertVerifier(c.config.PinnedCertHash)
+		orig := tlsConfig.VerifyPeerCertificate
+		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			if err := verifier(rawCerts, verifiedChains); err != nil {
+				return err
+			}
+			if orig != nil {
+				return orig(rawCerts, verifiedChains)
+			}
+			return nil
+		}
+	}
 	transport.TLSClientConfig = tlsConfig
 	return &http.Client{Timeout: c.config.HTTPTimeout, Transport: transport}
+}
+
+func (c *Client) addSSHKeyAuth(r *http.Request) {
+	if c.config.SSHKeyPath == "" || c.config.ClientID == "" {
+		return
+	}
+	data, err := os.ReadFile(c.config.SSHKeyPath)
+	if err != nil {
+		return
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return
+	}
+	privKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return
+	}
+	edKey, ok := privKey.(ed25519.PrivateKey)
+	if !ok {
+		return
+	}
+	ts := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	msg := c.config.ClientID + ":" + ts
+	sig, err := edKey.Sign(rand.Reader, []byte(msg), crypto.Hash(0))
+	if err != nil {
+		return
+	}
+	r.Header.Set("X-Client-ID", c.config.ClientID)
+	r.Header.Set("X-Timestamp", ts)
+	r.Header.Set("X-Signature", hex.EncodeToString(sig))
 }
 
 func (c *Client) userAgent() string {
